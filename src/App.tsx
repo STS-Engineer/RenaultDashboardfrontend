@@ -7,6 +7,8 @@ import NotFound from "./pages/OtherPage/NotFound";
 
 import UploadCsv from "./pages/Renault/UploadCsv";
 import TestViewer from "./pages/Renault/TestViewer";
+import Characteristics from "./pages/Renault/Characteristics";
+import LiveTestViewer from "./pages/Renault/LiveTestViewer"; // ✅ ADD THIS
 
 import { ScrollToTop } from "./components/common/ScrollToTop";
 
@@ -19,7 +21,10 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route index path="/" element={<UploadCsv />} />
           <Route path="/upload" element={<UploadCsv />} />
+
           <Route path="/tests" element={<TestViewer />} />
+          <Route path="/live" element={<LiveTestViewer />} /> {/* ✅ NEW */}
+          <Route path="/characterization" element={<Characteristics />} />
         </Route>
 
         <Route path="/signin" element={<SignIn />} />

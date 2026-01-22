@@ -13,38 +13,52 @@ import {
   Legend,
 } from "recharts";
 
-type Test = {
-  id: number;
-  name: string;
-};
+type Test = { id: number; name: string };
 
-type SeriesPoint = {
+// Backend series returns these keys (after our backend fix):
+// idx, t_sec, hours, rpm, cons, t1,t2,t3, b1..b4, l1,l2, sup
+type BackendSeriesPoint = {
   idx: number;
+  t_sec?: number | null;
+  hours?: number | null;
+
   rpm: number | null;
   cons: number | null;
+
   t1: number | null;
   t2: number | null;
   t3: number | null;
+
   b1: number | null;
   b2: number | null;
   b3: number | null;
   b4: number | null;
+
   l1: number | null;
   l2: number | null;
   sup: number | null;
 };
 
-// Distinct palette
+type UiPoint = BackendSeriesPoint & {
+  // what charts use
+  t_hour: number; // x-axis in hours
+  current_a: number | null;
+  vdrop: number | null;
+
+  hv_minus_avg: number | null;
+  hv_plus_avg: number | null;
+};
+
 const COLORS = {
-  t1: "#2563eb",
-  t2: "#dc2626",
-  t3: "#16a34a",
-  cons: "#f59e0b",
+  vdrop: "#2563eb",
+  current: "#f59e0b",
   rpm: "#7c3aed",
   b1: "#0ea5e9",
   b2: "#f97316",
   b3: "#22c55e",
   b4: "#e11d48",
+  hvp: "#16a34a",
+  hvn: "#dc2626",
   l1: "#14b8a6",
   l2: "#a855f7",
   sup: "#64748b",
@@ -122,13 +136,7 @@ function Modal({
       aria-modal="true"
       role="dialog"
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
-      />
-
-      {/* Panel */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative z-10 w-[95vw] max-w-6xl rounded-2xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-950">
         <div className="mb-3 flex items-start justify-between gap-4">
           <div>
@@ -139,7 +147,6 @@ function Modal({
               ESC or click outside to close
             </div>
           </div>
-
           <button
             onClick={onClose}
             className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-200 dark:hover:bg-white/[0.06]"
@@ -147,14 +154,13 @@ function Modal({
             Close
           </button>
         </div>
-
         <div className="h-[70vh] w-full">{children}</div>
       </div>
     </div>
   );
 }
 
-type ChartId = "tension" | "cons" | "rpm" | "brush" | "lower";
+type ChartId = "vdrop" | "current" | "rpm" | "brush" | "lower" | "support";
 
 export default function TestViewer() {
   const [searchParams] = useSearchParams();
@@ -163,14 +169,18 @@ export default function TestViewer() {
   const [selected, setSelected] = useState<number | null>(null);
   const [status, setStatus] = useState("");
 
-  const [module, setModule] = useState<1 | 2 | 3>(1);
-  const [step, setStep] = useState(200);
+  const [system, setSystem] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState(400);
 
-  const [series, setSeries] = useState<SeriesPoint[]>([]);
+  // Time filter (seconds). 0 = no end filter.
+  const [tStartSec, setTStartSec] = useState(0);
+  const [tEndSec, setTEndSec] = useState(0);
+
+  const [series, setSeries] = useState<BackendSeriesPoint[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // modal state
   const [modalChart, setModalChart] = useState<ChartId | null>(null);
+
+  const DT_SEC = 0.05;
 
   async function loadTests() {
     try {
@@ -182,12 +192,18 @@ export default function TestViewer() {
     }
   }
 
-  async function loadSeries(testId: number, mod: number, stepValue: number) {
+  async function loadSeries(testId: number) {
     setLoading(true);
     setStatus("");
     try {
-      const res = await api.get<SeriesPoint[]>(`/series/${testId}`, {
-        params: { module: mod, step: stepValue },
+      const res = await api.get<BackendSeriesPoint[]>(`/series/${testId}`, {
+        params: {
+          system,
+          step,
+          dt_sec: DT_SEC,
+          t_start_sec: tStartSec,
+          t_end_sec: tEndSec, // 0 means “no end” (backend must support this)
+        },
       });
       setSeries(res.data);
     } catch (err: any) {
@@ -206,7 +222,6 @@ export default function TestViewer() {
 
   useEffect(() => {
     if (!tests.length) return;
-
     const qp = searchParams.get("testId");
     const qpId = qp ? Number(qp) : NaN;
 
@@ -219,73 +234,120 @@ export default function TestViewer() {
   }, [tests, searchParams]);
 
   useEffect(() => {
-    if (selected != null) loadSeries(selected, module, step);
+    if (selected != null) loadSeries(selected);
     // eslint-disable-next-line
-  }, [selected, module, step]);
+  }, [selected, system, step, tStartSec, tEndSec]);
 
-  const data = useMemo(() => {
-    return series.map((p) => ({
-      ...p,
-      hours: p.idx / 3600,
-    }));
+  const data: UiPoint[] = useMemo(() => {
+    return series.map((p) => {
+      const tSec =
+        (typeof p.t_sec === "number" ? p.t_sec : p.idx * DT_SEC) ?? p.idx * DT_SEC;
+
+      const hours =
+        typeof p.hours === "number" && Number.isFinite(p.hours)
+          ? p.hours
+          : tSec / 3600;
+
+      const vdrop =
+        p.t1 != null && p.t2 != null && p.t3 != null
+          ? (p.t1 + p.t2 + p.t3) / 3
+          : null;
+
+      const hv_minus_avg =
+        p.b1 != null && p.b2 != null ? (p.b1 + p.b2) / 2 : null;
+
+      const hv_plus_avg =
+        p.b3 != null && p.b4 != null ? (p.b3 + p.b4) / 2 : null;
+
+      return {
+        ...p,
+        t_hour: hours,
+        current_a: p.cons ?? null,
+        vdrop,
+        hv_minus_avg,
+        hv_plus_avg,
+      };
+    });
   }, [series]);
 
   const commonTooltip = (
     <Tooltip
       formatter={(value, name) => [fmt(value), String(name)]}
-      labelFormatter={(label) => `hours: ${Number(label).toFixed(2)}`}
+      labelFormatter={(label) => `hours: ${Number(label).toFixed(3)}`}
     />
   );
 
   const renderChart = (chartId: ChartId) => {
     switch (chartId) {
-      case "tension":
+      case "vdrop":
         return (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hours" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
               <YAxis />
               {commonTooltip}
               <Legend />
-              <Line type="monotone" name="Tension1" dataKey="t1" stroke={COLORS.t1} dot={false} isAnimationActive={false} />
-              <Line type="monotone" name="Tension2" dataKey="t2" stroke={COLORS.t2} dot={false} isAnimationActive={false} />
-              <Line type="monotone" name="Tension3" dataKey="t3" stroke={COLORS.t3} dot={false} isAnimationActive={false} />
+              <Line
+                type="monotone"
+                name="Voltage drop (avg T1/T2/T3)"
+                dataKey="vdrop"
+                stroke={COLORS.vdrop}
+                dot={false}
+                isAnimationActive={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         );
-      case "cons":
+
+      case "current":
         return (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hours" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
               <YAxis />
               {commonTooltip}
               <Legend />
-              <Line type="monotone" name="Cons alim 1" dataKey="cons" stroke={COLORS.cons} dot={false} isAnimationActive={false} />
+              <Line
+                type="monotone"
+                name="Current (A)"
+                dataKey="current_a"
+                stroke={COLORS.current}
+                dot={false}
+                isAnimationActive={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         );
+
       case "rpm":
         return (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hours" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
               <YAxis />
               {commonTooltip}
               <Legend />
-              <Line type="monotone" name="RPM" dataKey="rpm" stroke={COLORS.rpm} dot={false} isAnimationActive={false} />
+              <Line
+                type="monotone"
+                name="RPM"
+                dataKey="rpm"
+                stroke={COLORS.rpm}
+                dot={false}
+                isAnimationActive={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         );
+
       case "brush":
         return (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hours" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
               <YAxis />
               {commonTooltip}
               <Legend />
@@ -293,40 +355,66 @@ export default function TestViewer() {
               <Line type="monotone" name="Brush 2" dataKey="b2" stroke={COLORS.b2} dot={false} isAnimationActive={false} />
               <Line type="monotone" name="Brush 3" dataKey="b3" stroke={COLORS.b3} dot={false} isAnimationActive={false} />
               <Line type="monotone" name="Brush 4" dataKey="b4" stroke={COLORS.b4} dot={false} isAnimationActive={false} />
+              <Line type="monotone" name="HV- avg" dataKey="hv_minus_avg" stroke={COLORS.hvn} dot={false} isAnimationActive={false} />
+              <Line type="monotone" name="HV+ avg" dataKey="hv_plus_avg" stroke={COLORS.hvp} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         );
+
       case "lower":
         return (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hours" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
               <YAxis />
               {commonTooltip}
               <Legend />
               <Line type="monotone" name="Lower 1" dataKey="l1" stroke={COLORS.l1} dot={false} isAnimationActive={false} />
               <Line type="monotone" name="Lower 2" dataKey="l2" stroke={COLORS.l2} dot={false} isAnimationActive={false} />
-              <Line type="monotone" name="Support" dataKey="sup" stroke={COLORS.sup} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         );
+
+      case "support":
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="t_hour" tickFormatter={(v) => Number(v).toFixed(0)} />
+              <YAxis />
+              {commonTooltip}
+              <Legend />
+              <Line
+                type="monotone"
+                name="Plastic support"
+                dataKey="sup"
+                stroke={COLORS.sup}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        );
+
       default:
         return null;
     }
   };
 
   const modalTitle =
-    modalChart === "tension"
-      ? "U excit (V) — Tension1/2/3 vs Time (hours)"
-      : modalChart === "cons"
-      ? "I excit (A) — cons_alim_1 vs Time (hours)"
+    modalChart === "vdrop"
+      ? `System ${system} — Voltage drop vs Time (hours)`
+      : modalChart === "current"
+      ? `System ${system} — Current vs Time (hours)`
       : modalChart === "rpm"
-      ? "Régime (tr/min) — RPM vs Time (hours)"
+      ? `System ${system} — RPM vs Time (hours)`
       : modalChart === "brush"
-      ? "Températures balais (°C) — Brush 1..4 vs Time (hours)"
+      ? `System ${system} — Brush temperatures vs Time (hours)`
       : modalChart === "lower"
-      ? "Lower Brush Box + Plastic support (°C) vs Time (hours)"
+      ? `System ${system} — Lower Brush Box temps vs Time (hours)`
+      : modalChart === "support"
+      ? `System ${system} — Plastic support temp vs Time (hours)`
       : "";
 
   return (
@@ -339,11 +427,11 @@ export default function TestViewer() {
             Renault Test Viewer
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            CDC “500h” charts (module {module})
+            Time axis = idx × 0.05s (50ms) • System view (1/2/3)
           </p>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-4">
-            <div>
+          <div className="mt-5 grid gap-4 md:grid-cols-6">
+            <div className="md:col-span-2">
               <label className="text-xs text-gray-500 dark:text-gray-400">Test</label>
               <select
                 className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-800 dark:bg-gray-900"
@@ -359,15 +447,15 @@ export default function TestViewer() {
             </div>
 
             <div>
-              <label className="text-xs text-gray-500 dark:text-gray-400">Module</label>
+              <label className="text-xs text-gray-500 dark:text-gray-400">System</label>
               <select
                 className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-800 dark:bg-gray-900"
-                value={module}
-                onChange={(e) => setModule(Number(e.target.value) as 1 | 2 | 3)}
+                value={system}
+                onChange={(e) => setSystem(Number(e.target.value) as 1 | 2 | 3)}
               >
-                <option value={1}>Module 1 (S1)</option>
-                <option value={2}>Module 2 (S2)</option>
-                <option value={3}>Module 3 (S3)</option>
+                <option value={1}>System 1</option>
+                <option value={2}>System 2</option>
+                <option value={3}>System 3</option>
               </select>
             </div>
 
@@ -382,68 +470,80 @@ export default function TestViewer() {
               />
             </div>
 
-            <div className="flex items-end">
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400">Start (sec)</label>
+              <input
+                type="number"
+                min={0}
+                value={tStartSec}
+                onChange={(e) => setTStartSec(Math.max(0, Number(e.target.value)))}
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-800 dark:bg-gray-900"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 dark:text-gray-400">End (sec, 0=all)</label>
+              <input
+                type="number"
+                min={0}
+                value={tEndSec}
+                onChange={(e) => setTEndSec(Math.max(0, Number(e.target.value)))}
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-800 dark:bg-gray-900"
+              />
+            </div>
+
+            <div className="md:col-span-6 flex items-end gap-3">
               <button
-                onClick={() => selected != null && loadSeries(selected, module, step)}
+                onClick={() => selected != null && loadSeries(selected)}
                 disabled={selected == null}
-                className="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+                className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60"
               >
                 {loading ? "Loading…" : "Reload data"}
               </button>
+
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                Loaded {data.length} points.
+              </div>
             </div>
           </div>
 
           {status && <div className="mt-4 text-sm text-red-500">{status}</div>}
 
-          <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-            Loaded {data.length} points.
-          </div>
+          {!loading && !status && data.length === 0 && (
+            <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+              No data returned. Try: set End(sec)=0, Start(sec)=0, and reduce step (e.g. 50–200).
+            </div>
+          )}
         </div>
 
-        {/* CHARTS GRID */}
         <div className="grid gap-6 lg:grid-cols-2">
-          <ChartCard
-            title="U excit (V) — Tension1/2/3 vs Time (hours)"
-            onOpen={() => setModalChart("tension")}
-          >
-            {renderChart("tension")}
+          <ChartCard title={`System ${system} — Voltage drop (V) vs Time`} onOpen={() => setModalChart("vdrop")}>
+            {renderChart("vdrop")}
           </ChartCard>
 
-          <ChartCard
-            title="I excit (A) — cons_alim_1 vs Time (hours)"
-            onOpen={() => setModalChart("cons")}
-          >
-            {renderChart("cons")}
+          <ChartCard title={`System ${system} — Current (A) vs Time`} onOpen={() => setModalChart("current")}>
+            {renderChart("current")}
           </ChartCard>
 
-          <ChartCard
-            title="Régime (tr/min) — RPM vs Time (hours)"
-            onOpen={() => setModalChart("rpm")}
-          >
+          <ChartCard title={`System ${system} — RPM vs Time`} onOpen={() => setModalChart("rpm")}>
             {renderChart("rpm")}
           </ChartCard>
 
-          <ChartCard
-            title="Températures balais (°C) — Brush 1..4 vs Time (hours)"
-            onOpen={() => setModalChart("brush")}
-          >
+          <ChartCard title={`System ${system} — Brush temperatures (incl. HV+/HV- avg)`} onOpen={() => setModalChart("brush")}>
             {renderChart("brush")}
           </ChartCard>
 
-          <ChartCard
-            title="Lower Brush Box + Plastic support (°C) vs Time (hours)"
-            onOpen={() => setModalChart("lower")}
-          >
+          <ChartCard title={`System ${system} — Lower Brush Box temperatures`} onOpen={() => setModalChart("lower")}>
             {renderChart("lower")}
+          </ChartCard>
+
+          <ChartCard title={`System ${system} — Plastic support temperature`} onOpen={() => setModalChart("support")}>
+            {renderChart("support")}
           </ChartCard>
         </div>
       </div>
 
-      <Modal
-        open={modalChart !== null}
-        title={modalTitle}
-        onClose={() => setModalChart(null)}
-      >
+      <Modal open={modalChart !== null} title={modalTitle} onClose={() => setModalChart(null)}>
         {modalChart ? renderChart(modalChart) : null}
       </Modal>
     </>

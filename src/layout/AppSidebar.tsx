@@ -47,14 +47,41 @@ const AppSidebar: React.FC = () => {
       </div>
 
       <nav className="flex flex-col gap-2">
-        <Link to="/upload" className={itemClass(location.pathname === "/upload" || location.pathname === "/")}>
+        {/* Upload */}
+        <Link
+          to="/upload"
+          className={itemClass(
+            location.pathname === "/upload" || location.pathname === "/"
+          )}
+        >
           <span>⬆️</span>
           {isWide && <span>Upload</span>}
         </Link>
 
-        <Link to="/tests" className={itemClass(location.pathname === "/tests")}>
+        {/* Test Viewer */}
+        <Link
+          to="/tests"
+          className={itemClass(location.pathname === "/tests")}
+        >
           <span>📈</span>
           {isWide && <span>Test Viewer</span>}
+        </Link>
+         {/* 🔴 LIVE Test Viewer */}
+      <Link
+  to="/live"
+  className={itemClass(location.pathname === "/live")}
+>
+  <span>🔴</span>
+  {isWide && <span>Live Test</span>}
+</Link>
+
+        {/* ✅ Characterization */}
+        <Link
+          to="/characterization"
+          className={itemClass(location.pathname === "/characterization")}
+        >
+          <span>📊</span>
+          {isWide && <span>Characterization</span>}
         </Link>
       </nav>
 
