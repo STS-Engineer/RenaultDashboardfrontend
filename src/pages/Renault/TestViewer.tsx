@@ -15,16 +15,16 @@ import {
 
 type Test = { id: number; name: string };
 
-// Backend series returns these keys (after our backend fix):
-// idx, t_sec, hours, rpm, cons, t1,t2,t3, b1..b4, l1,l2, sup
+// ✅ FIX: backend returns current_a (NOT cons)
 type BackendSeriesPoint = {
   idx: number;
   t_sec?: number | null;
   hours?: number | null;
 
   rpm: number | null;
-  cons: number | null;
+  current_a: number | null;
 
+  vdrop?: number | null; // backend may send vdrop
   t1: number | null;
   t2: number | null;
   t3: number | null;
@@ -40,9 +40,7 @@ type BackendSeriesPoint = {
 };
 
 type UiPoint = BackendSeriesPoint & {
-  // what charts use
   t_hour: number; // x-axis in hours
-  current_a: number | null;
   vdrop: number | null;
 
   hv_minus_avg: number | null;
@@ -172,7 +170,6 @@ export default function TestViewer() {
   const [system, setSystem] = useState<1 | 2 | 3>(1);
   const [step, setStep] = useState(400);
 
-  // Time filter (seconds). 0 = no end filter.
   const [tStartSec, setTStartSec] = useState(0);
   const [tEndSec, setTEndSec] = useState(0);
 
@@ -202,7 +199,7 @@ export default function TestViewer() {
           step,
           dt_sec: DT_SEC,
           t_start_sec: tStartSec,
-          t_end_sec: tEndSec, // 0 means “no end” (backend must support this)
+          t_end_sec: tEndSec,
         },
       });
       setSeries(res.data);
@@ -238,6 +235,7 @@ export default function TestViewer() {
     // eslint-disable-next-line
   }, [selected, system, step, tStartSec, tEndSec]);
 
+  // ✅ FIX: keep using backend current_a directly
   const data: UiPoint[] = useMemo(() => {
     return series.map((p) => {
       const tSec =
@@ -248,8 +246,11 @@ export default function TestViewer() {
           ? p.hours
           : tSec / 3600;
 
+      // Prefer backend vdrop if present; else compute from t1/t2/t3
       const vdrop =
-        p.t1 != null && p.t2 != null && p.t3 != null
+        typeof p.vdrop === "number"
+          ? p.vdrop
+          : p.t1 != null && p.t2 != null && p.t3 != null
           ? (p.t1 + p.t2 + p.t3) / 3
           : null;
 
@@ -262,7 +263,6 @@ export default function TestViewer() {
       return {
         ...p,
         t_hour: hours,
-        current_a: p.cons ?? null,
         vdrop,
         hv_minus_avg,
         hv_plus_avg,
@@ -290,7 +290,7 @@ export default function TestViewer() {
               <Legend />
               <Line
                 type="monotone"
-                name="Voltage drop (avg T1/T2/T3)"
+                name="Voltage drop (V)"
                 dataKey="vdrop"
                 stroke={COLORS.vdrop}
                 dot={false}
@@ -309,6 +309,7 @@ export default function TestViewer() {
               <YAxis />
               {commonTooltip}
               <Legend />
+              {/* ✅ FIX: this now works because backend returns current_a and we keep it */}
               <Line
                 type="monotone"
                 name="Current (A)"
