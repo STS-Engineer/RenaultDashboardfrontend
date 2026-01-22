@@ -1,35 +1,35 @@
-name: Deploy Frontend (Static Web App)
+name: Deploy Frontend (Vite -> Azure Static Web Apps)
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - frontend/**
 
 jobs:
-  build-and-deploy:
+  build_and_deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install
         working-directory: frontend
-        run: npm install
+        run: npm ci
 
-      - name: Build frontend
+      - name: Build (inject VITE_API_BASE_URL)
         working-directory: frontend
-        run: npm run build
         env:
-          # 🔴 CHANGE THIS to your real backend URL
-          VITE_API_BASE_URL: https://YOUR-BACKEND-NAME.azurewebsites.net
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        run: npm run build
 
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
