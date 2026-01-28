@@ -182,7 +182,7 @@ export default function TestViewer() {
   async function loadTests() {
     try {
       setStatus("");
-      const res = await api.get<Test[]>("/tests");
+      const res = await api.get<Test[]>("/bt/tests");
       setTests(res.data);
     } catch {
       setStatus("❌ Backend not reachable");
@@ -193,7 +193,7 @@ export default function TestViewer() {
     setLoading(true);
     setStatus("");
     try {
-      const res = await api.get<BackendSeriesPoint[]>(`/series/${testId}`, {
+      const res = await api.get<BackendSeriesPoint[]>(`/bt/series/${testId}`, {
         params: {
           system,
           step,
